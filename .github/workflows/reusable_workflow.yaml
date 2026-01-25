@@ -1,0 +1,390 @@
+name: Reusable Secure Snyk Workflow
+
+on:
+  workflow_call:
+    inputs:
+      PROFILE:
+        description: "Input: 'app' for SCA/SAST. 'iac' for IaC. 'image_scan' for Container Images"
+        required: true
+        type: string
+
+      SCA_scan:
+        description: "App profile: set to 'snyk' to run; set to 'none' to skip"
+        required: false
+        default: "none"
+        type: string
+
+      SAST_scan:
+        description: "App profile: set to 'snyk' to run; set to 'none' to skip"
+        required: false
+        default: "none"
+        type: string
+
+      IAC_scan:
+        description: "IaC profile: set to 'snyk' to run; set to 'none' to skip"
+        required: false
+        default: "snyk"
+        type: string
+
+      CONTAINER_scan:
+        description: "Image scan profile: set to 'snyk' to run; set to 'none' to skip"
+        required: false
+        default: "snyk"
+        type: string
+
+      severity_threshold:
+        description: >
+          Platform enforced severity threshold. Default is 'high'.
+          If caller sets 'none', workflow will internally enforce 'low' (scorched earth).
+        required: false
+        default: "high"
+        type: string
+
+    secrets:
+      SNYK_TOKEN:
+        required: true
+      Snyk_Org:
+        required: true
+
+jobs:
+  validate_profile:
+    name: Validate Profile and Required Scans
+    runs-on: ubuntu-latest
+    env:
+      PROFILE: ${{ inputs.PROFILE }}
+    steps:
+      - name: Validate profile and required scan configuration
+        run: |
+          echo "Profile = ${PROFILE}"
+          echo "SCA_scan = ${{ inputs.SCA_scan }}"
+          echo "SAST_scan = ${{ inputs.SAST_scan }}"
+          echo "IAC_scan = ${{ inputs.IAC_scan }}"
+          echo "CONTAINER_scan = ${{ inputs.CONTAINER_scan }}"
+
+          if [ "$PROFILE" = "app" ]; then
+            echo "Validating App profile requirements (SCA and/or SAST)..."
+            if [ "${{ inputs.SCA_scan }}" = "snyk" ] || [ "${{ inputs.SAST_scan }}" = "snyk" ]; then
+              echo "App profile validation passed."
+            else
+              echo "Error: For 'app' profile, at least one of SCA_scan or SAST_scan must be set to 'snyk'."
+              exit 1
+            fi
+          elif [ "$PROFILE" = "iac" ]; then
+            echo "Validating IaC profile requirements (IaC Scan)..."
+            if [ "${{ inputs.IAC_scan }}" = "snyk" ]; then
+              echo "IaC profile validation passed."
+            else
+              echo "Error: For 'iac' profile, IAC_scan must be set to 'snyk'."
+              exit 1              
+            fi
+          elif [ "$PROFILE" = "image_scan" ]; then
+            echo "Validating Container Image Scan profile requirements..."
+            if [ "${{ inputs.CONTAINER_scan }}" = "snyk" ]; then
+              echo "Image scan profile validation passed."
+            else
+              echo "Error: For 'image_scan' profile, CONTAINER_scan must be set to 'snyk'."
+              exit 1              
+            fi
+          else
+            echo "Error: Invalid PROFILE value: '${PROFILE}'. Must be 'app', 'iac', or 'image_scan'."
+            exit 1
+          fi
+
+  sca_scan:
+    name: SCA (Open Source) Scan
+    runs-on: ubuntu-latest
+    needs: validate_profile
+    if: inputs.PROFILE == 'app' && inputs.SCA_scan == 'snyk'
+    env:
+      SNYK_SEVERITY: ${{ inputs.severity_threshold == 'none' && 'low' || 'high' }}
+
+    steps:
+      - name: Show enforce severity
+        run: 'echo "Enforced Snyk severity threshold for SCA: $SNYK_SEVERITY"'
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Python dependencies
+        if: hashFiles('requirements.txt') != ''
+        run: pip install -r requirements.txt
+
+      - name: Install Snyk CLI
+        uses: snyk/actions/setup@master
+
+      - name: Authenticate Snyk
+        run: snyk auth ${{ secrets.SNYK_TOKEN }}
+
+      - name: Run REQUIRED SCA scan
+        run: |
+          echo "Running REQUIRED SCA scan with severity threshold: $SNYK_SEVERITY"
+
+          set +e
+          snyk test \
+            --all-projects \
+            --severity-threshold=$SNYK_SEVERITY \
+            --org=${{ secrets.Snyk_Org }}
+          EXIT_CODE=$?
+          set -e
+
+          if [ "$EXIT_CODE" -ne 0 ]; then
+            echo "This build failed due to High/Critical (or higher than threshold) SCA issues."
+            echo "Please view the Snyk report to remediate the issues."
+            exit $EXIT_CODE
+          else
+            echo "No issues at or above the severity threshold ($SNYK_SEVERITY) detected in SCA scan."
+          fi
+
+      - name: Monitor SCA Results to SNYK UI
+        if: always()
+        id: sca_monitor
+        run: |
+          echo "Uploading SCA report to Snyk UI..."
+          snyk monitor \
+            --all-projects \
+            --severity-threshold=$SNYK_SEVERITY \
+            --json \
+            --org=${{ secrets.Snyk_Org }} > sca-monitor.json
+
+          REPORT_URL=$(jq -r '.uri' sca-monitor.json)
+          echo "report-url=$REPORT_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Display SCA Report Link
+        if: always()
+        run: |
+          echo "Explore this Report: ${{ steps.sca_monitor.outputs.report-url }}"
+          
+          if [ -n "${{ steps.sca_monitor.outputs.report-url }}" ]; then
+            echo "### 📦 Snyk SCA (Open Source) Report" >> $GITHUB_STEP_SUMMARY
+            echo "Review the SCA security findings here: [View Report](${{ steps.sca_monitor.outputs.report-url }})" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  sast_scan:
+    name: SAST (Code) Scan
+    runs-on: ubuntu-latest
+    needs: validate_profile
+    if: inputs.PROFILE == 'app' && inputs.SAST_scan == 'snyk'
+    env:
+      SNYK_SEVERITY: ${{ inputs.severity_threshold == 'none' && 'low' || 'high' }}
+
+    steps:
+      - name: Show enforce severity
+        run: 'echo "Enforced Snyk severity threshold for SAST: $SNYK_SEVERITY"'
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Python dependencies
+        if: hashFiles('requirements.txt') != ''
+        run: pip install -r requirements.txt
+
+      - name: Install Snyk CLI
+        uses: snyk/actions/setup@master
+
+      - name: Authenticate Snyk
+        run: snyk auth ${{ secrets.SNYK_TOKEN }}
+
+      - name: Run REQUIRED SAST scan + Upload SAST Report (and emit link)
+        id: sast_monitor
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          ORG_SLUG="${{ secrets.Snyk_Org }}"
+          PROJECT_NAME="Github_Actions_DevSecOps"
+          TARGET_REF="${GITHUB_REF_NAME:-unknown}"
+          REMOTE_URL="https://github.com/${GITHUB_REPOSITORY}.git"
+
+          echo "Running REQUIRED SAST scan with severity threshold: $SNYK_SEVERITY + Uploading SAST Report to Snyk UI..."
+
+          set +e
+          snyk code test \
+            --severity-threshold="$SNYK_SEVERITY" \
+            --org="$ORG_SLUG" \
+            --report \
+            --project-name="$PROJECT_NAME" \
+            --target-reference="$TARGET_REF" \
+            --remote-repo-url="$REMOTE_URL" \
+            2>&1 | tee sast-monitor.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+
+          REPORT_URL="$(grep -Eo 'https://app\.snyk\.io/org/[^[:space:]]+' sast-monitor.log | tail -n 1 || true)"
+
+          if [ -z "$REPORT_URL" ]; then
+            REPORT_URL="https://app.snyk.io/org/${ORG_SLUG}/projects?search=${PROJECT_NAME}"
+          fi
+          
+          echo "report-url=$REPORT_URL" >> "$GITHUB_OUTPUT"
+
+          if [ "$EXIT_CODE" -ne 0 ]; then
+            echo "This build failed due to High/Critical (or higher than threshold) SAST issues."
+            echo "Please view the Snyk report to remediate the issues."
+            exit $EXIT_CODE
+          else
+            echo "No issues at or above the severity threshold ($SNYK_SEVERITY) detected in SAST scan."
+          fi     
+
+      - name: Display SAST Report Link
+        if: always()
+        run: |
+          echo "Explore this Report: ${{ steps.sast_monitor.outputs.report-url }}"
+          
+          if [ -n "${{ steps.sast_monitor.outputs.report-url }}" ]; then
+            echo "### 💻 Snyk SAST (Code) Report" >> $GITHUB_STEP_SUMMARY
+            echo "Review the SAST security findings here: [View Report](${{ steps.sast_monitor.outputs.report-url }})" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  iac_scan:
+    name: IaC Scan
+    runs-on: ubuntu-latest
+    needs: validate_profile
+    if: inputs.PROFILE == 'iac'
+    env:
+      SNYK_SEVERITY: ${{ inputs.severity_threshold == 'none' && 'low' || 'high' }}
+
+    steps:
+      - name: Show enforce severity
+        run: 'echo "Enforced Snyk severity threshold for IaC: $SNYK_SEVERITY"'
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Snyk CLI
+        uses: snyk/actions/setup@master
+
+      - name: Authenticate Snyk
+        run: snyk auth ${{ secrets.SNYK_TOKEN }}
+
+      - name: Run REQUIRED IaC scan + Upload IaC Report (and emit link)
+        id: iac
+        run: |
+          echo "Running REQUIRED IaC scan with severity threshold: $SNYK_SEVERITY + Uploading IaC Report to SNYK UI..."
+
+          set +e
+          snyk iac test \
+            --severity-threshold="$SNYK_SEVERITY" \
+            --org="${{ secrets.Snyk_Org }}" \
+            --report \
+            --json > iac-report.json
+          EXIT_CODE=$?
+          set -e
+
+          echo "=== Raw JSON output ==="
+          cat iac-report.json
+          
+          ORG_SLUG="$(jq -r '.meta.org // .org // empty' iac-report.json)"
+          PROJECT_ID="$(jq -r '.meta.projectId // empty' iac-report.json)"
+
+          if [ -n "$ORG_SLUG" ] && [ -n "$PROJECT_ID" ]; then
+            REPORT_URL="https://app.snyk.io/org/${ORG_SLUG}/project/${PROJECT_ID}"
+            echo "Report URL: $REPORT_URL"
+            echo "report-url=$REPORT_URL" >> "$GITHUB_OUTPUT"
+          else
+            echo "Could not construct Snyk URL (missing org or projectId)."
+            echo "meta.org=$(jq -r '.meta.org // empty' iac-report.json)"
+            echo "meta.projectId=$(jq -r '.meta.projectId // empty' iac-report.json)"
+          fi
+
+      - name: Display IaC Report Link
+        if: always()
+        run: |
+          echo "Explore this Report: ${{ steps.iac.outputs.report-url }}"
+
+          if [ -n "${{ steps.iac.outputs.report-url }}" ]; then
+            echo "### 🏗️ Infrastructure as Code Report" >> $GITHUB_STEP_SUMMARY
+            echo "Review the IaC security findings here: [View Report](${{ steps.iac.outputs.report-url }})" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  container_scan:
+    name: Container Scan
+    runs-on: ubuntu-latest
+    needs: validate_profile
+    if: inputs.PROFILE == 'image_scan'
+    env:
+      SNYK_SEVERITY: ${{ inputs.severity_threshold == 'none' && 'low' || 'high' }}
+
+    steps:
+      - name: Show enforce severity
+        run: |
+          echo "Enforced Snyk severity threshold for Container: $SNYK_SEVERITY"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        run: |
+          echo "Building Docker image for scanning..."
+          docker build -t training-image:latest .
+
+      - name: Install Snyk CLI
+        uses: snyk/actions/setup@master
+
+      - name: Authenticate Snyk
+        run: snyk auth ${{ secrets.SNYK_TOKEN }}
+
+      - name: Run Container scan
+        id: container_test
+        shell: bash
+        run: |
+          set +e
+          snyk container test training-image:latest \
+            --severity-threshold="$SNYK_SEVERITY" \
+            --org="${{ secrets.Snyk_Org }}"
+          echo "exit-code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Monitor Container Results to SNYK UI (emit ALL links)
+        if: always()
+        id: container_monitor
+        shell: bash
+        run: |
+          echo "Uploading Container report to Snyk UI..."
+          snyk container monitor training-image:latest \
+            --severity-threshold="$SNYK_SEVERITY" \
+            --json \
+            --org="${{ secrets.Snyk_Org }}" > container-monitor.json
+
+          mapfile -t URLS < <(jq -r '.[] | .uri? // empty' container-monitor.json)
+
+          if [ "${#URLS[@]}" -eq 0 ]; then
+            echo "No report URIs found in container-monitor.json"
+            echo "container-report-urls=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Found ${#URLS[@]} report link(s):"
+          printf ' - %s\n' "${URLS[@]}"
+
+          {
+            echo "container-report-urls<<EOF"
+            printf '%s\n' "${URLS[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Display Container Report Links
+        if: always()
+        run: |
+          echo "Explore these Reports:"
+          echo "${{ steps.container_monitor.outputs.container-report-urls }}"
+          echo "### 🛡️ Snyk Container Reports" >> $GITHUB_STEP_SUMMARY
+    
+          if [ -n "${{ steps.container_monitor.outputs.container-report-urls }}" ]; then
+            echo "The following reports are available for this scan:" >> $GITHUB_STEP_SUMMARY
+
+            echo "${{ steps.container_monitor.outputs.container-report-urls }}" | while read -r line; do
+              echo "- [$line]($line)" >> $GITHUB_STEP_SUMMARY
+            done
+          else
+            echo "⚠️ No report links were generated." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Fail job if scan failed threshold
+        if: always()
+        shell: bash
+        run: |
+          EXIT_CODE="${{ steps.container_test.outputs.exit-code }}"
+          if [ "$EXIT_CODE" -ne 0 ]; then
+            echo "Container scan failed at threshold ($SNYK_SEVERITY). See report links above."
+            exit "$EXIT_CODE"
+          fi
