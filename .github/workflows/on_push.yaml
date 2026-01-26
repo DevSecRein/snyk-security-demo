@@ -13,7 +13,7 @@ jobs:
       SAST_scan: snyk
       IAC_scan: none
       CONTAINER_scan: none
-      severity_threshold: high
+      severity_threshold: medium
     secrets:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
       Snyk_Org: ${{ secrets.SNYK_ORG }}
