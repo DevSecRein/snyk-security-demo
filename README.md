@@ -2,7 +2,7 @@
 
 This repository demonstrates automated security scanning using **Snyk** and **GitHub Actions**.
 
-## 🎯 Purpose
+## Purpose
 
 This is a **training repository** that contains:
 - ✅ Intentionally vulnerable Flask application (`app.py`)
@@ -11,7 +11,7 @@ This is a **training repository** that contains:
 
 **⚠️ WARNING**: This code contains deliberate security vulnerabilities for educational purposes. **DO NOT** use in production!
 
-## 🔧 What's Inside
+## What's Inside:
 
 ### Application Files
 - **`app.py`**: Deliberately insecure Flask web application with common vulnerabilities
@@ -74,35 +74,16 @@ The active workflow (`on_push.yaml`) runs:
 - ❌ Container Scan (disabled)
 - ❌ IaC Scan (disabled)
 
-### Enabling Other Scans
+### Enabling and disabling scans
 
 Edit `.github/workflows/on_push.yaml` to enable additional scans:
 
 ```yaml
-jobs:
-  # Uncomment to enable SCA scanning
-  # sca_scan:
-  #   uses: ./.github/workflows/reusable_workflow.yaml
-  #   with:
-  #     PROFILE: app
-  #     SCA_scan: snyk
-  #     SAST_scan: none
-  #   secrets:
-  #     SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-  #     Snyk_Org: ${{ secrets.SNYK_ORG }}
-
-  # Uncomment to enable Container scanning
-  # container_scan:
-  #   uses: ./.github/workflows/reusable_workflow.yaml
-  #   with:
-  #     PROFILE: image_scan
-  #     CONTAINER_scan: snyk
-  #   secrets:
-  #     SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-  #     Snyk_Org: ${{ secrets.SNYK_ORG }}
+if: true               # ← Set to false to disable, true to enable
 ```
+The scans you want to run should be set as "true"
 
-## 🔍 Expected Scan Results
+## Expected Scan Results
 
 When you run the scans, Snyk should detect:
 
@@ -119,7 +100,7 @@ When you run the scans, Snyk should detect:
 - Known vulnerabilities in requests 2.25.1
 - Known vulnerabilities in urllib3 1.26.5
 
-## 📚 Learning Resources
+## Learning Resources
 
 - [Snyk Documentation](https://docs.snyk.io/)
 - [GitHub Actions Documentation](https://docs.github.com/en/actions)
@@ -138,7 +119,3 @@ This repository is for **educational purposes only**. The code intentionally con
 ## 📝 License
 
 MIT License - See LICENSE file for details
-
----
-
-**Happy Learning! 🎓**

@@ -5,14 +5,38 @@ on:
     branches: [ main ]
 
 jobs:
+  # Job 1: Application scans (SCA + SAST)
   sast_sca_scan:
+    if: true # ← Set to false to disable, true to enable
     uses: ./.github/workflows/reusable_workflow.yaml
     with:
       PROFILE: app
-      SCA_scan: none
+      SCA_scan: none # Change from "none" to "snyk" to enable scanning
       SAST_scan: snyk
-      IAC_scan: none
-      CONTAINER_scan: none
+      severity_threshold: medium
+    secrets:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      Snyk_Org: ${{ secrets.SNYK_ORG }}
+  
+  # Job 2: Infrastructure scanning
+  iac_scan:
+    if: false # ← Set to false to disable, true to enable
+    uses: ./.github/workflows/reusable_workflow.yaml
+    with:
+      PROFILE: iac
+      IAC_scan: snyk
+      severity_threshold: medium
+    secrets:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      Snyk_Org: ${{ secrets.SNYK_ORG }}
+
+  # Job 3: Container scanning
+  container_scan:
+    if: false # ← Set to false to disable, true to enable
+    uses: ./.github/workflows/reusable_workflow.yaml
+    with:
+      PROFILE: image_scan
+      CONTAINER_scan: snyk
       severity_threshold: medium
     secrets:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
