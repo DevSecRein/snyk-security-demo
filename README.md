@@ -56,7 +56,7 @@ This is a **training repository** that contains:
 1. Go to **Actions** tab in your repository
 2. If prompted, click **"I understand my workflows, go ahead and enable them"**
 
-## 📊 How It Works
+## How It Works
 
 ### Automatic Scanning
 Every time you push code to the `main` branch:
