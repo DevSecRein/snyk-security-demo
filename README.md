@@ -35,7 +35,7 @@ This is a **training repository** that contains:
 
 - **`.github/workflows/on_push.yaml`**: Triggers scans on push to main branch
 
-## 🚀 Setup Instructions
+## Setup Instructions
 
 ### 1. Get a Snyk Account
 
